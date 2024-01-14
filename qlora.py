@@ -31,7 +31,7 @@ from transformers import (
     LlamaTokenizer
 
 )
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, DatasetDict
 import evaluate
 
 from peft import (
@@ -65,9 +65,9 @@ def is_ipex_available():
         )
         return False
     return True
-    
 
-if torch.cuda.is_available():   
+
+if torch.cuda.is_available():
     torch.backends.cuda.matmul.allow_tf32 = True
 
 logger = logging.getLogger(__name__)
@@ -212,6 +212,7 @@ class TrainingArguments(transformers.Seq2SeqTrainingArguments):
     save_strategy: str = field(default='steps', metadata={"help": 'When to save checkpoints'})
     save_steps: int = field(default=250, metadata={"help": 'How often to save a model'})
     save_total_limit: int = field(default=40, metadata={"help": 'How many checkpoints to save before the oldest is overwritten'})
+    ibl_data: str = field(default='ibl-ver1', metadata={"help": 'The ibl_data for ibl training data'})
 
 @dataclass
 class GenerationArguments:
@@ -292,7 +293,7 @@ def get_accelerate_model(args, checkpoint_dir):
         n_gpus = torch.cuda.device_count()
     if is_ipex_available() and torch.xpu.is_available():
         n_gpus = torch.xpu.device_count()
-        
+
     max_memory = f'{args.max_memory_MB}MB'
     max_memory = {i: max_memory for i in range(n_gpus)}
     device_map = "auto"
@@ -333,7 +334,7 @@ def get_accelerate_model(args, checkpoint_dir):
             print('='*80)
             print('Your GPU supports bfloat16, you can accelerate training with the argument --bf16')
             print('='*80)
-            
+
     if compute_dtype == torch.float16 and (is_ipex_available() and torch.xpu.is_available()):
         compute_dtype = torch.bfloat16
         print('Intel XPU does not support float16 yet, so switching to bfloat16')
@@ -372,7 +373,7 @@ def get_accelerate_model(args, checkpoint_dir):
                     model.config.pad_token_id if model.config.pad_token_id != -1 else tokenizer.pad_token_id
                 ),
         })
-    
+
     if not args.full_finetune:
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=args.gradient_checkpointing)
 
@@ -433,7 +434,7 @@ def smart_tokenizer_and_embedding_resize(
     """
     num_new_tokens = tokenizer.add_special_tokens(special_tokens_dict)
     model.resize_token_embeddings(len(tokenizer))
-    
+
     if num_new_tokens > 0:
         input_embeddings_data = model.get_input_embeddings().weight.data
         output_embeddings_data = model.get_output_embeddings().weight.data
@@ -571,9 +572,11 @@ def make_data_module(tokenizer: transformers.PreTrainedTokenizer, args) -> Dict:
         - vicuna
 
     """
-    def load_data(dataset_name):
+    def load_data(dataset_name, ibl_data):
         if dataset_name == 'alpaca':
-            return load_dataset("tatsu-lab/alpaca")
+            dataset = load_dataset(f"fuyu-quant/{ibl_data}", split='train')
+            dataset_dict = DatasetDict({'train': dataset})
+            return dataset_dict
         elif dataset_name == 'alpaca-clean':
             return load_dataset("yahma/alpaca-cleaned")
         elif dataset_name == 'chip2':
@@ -633,7 +636,7 @@ def make_data_module(tokenizer: transformers.PreTrainedTokenizer, args) -> Dict:
         return dataset
 
      # Load dataset.
-    dataset = load_data(args.dataset)
+    dataset = load_data(args.dataset, args.ibl_data)
     dataset = format_dataset(dataset, args.dataset_format)
 
     # Split train/eval, reduce size
@@ -696,7 +699,7 @@ def train():
         **vars(model_args), **vars(data_args), **vars(training_args)
     )
     print(args)
-    
+
     checkpoint_dir, completed_training = get_last_checkpoint(args.output_dir)
     if completed_training:
         print('Detected that training was already completed!')
@@ -704,11 +707,12 @@ def train():
     model, tokenizer = get_accelerate_model(args, checkpoint_dir)
 
     model.config.use_cache = False
+    model.config.pretraining_tp = 1
     print('loaded model')
     set_seed(args.seed)
 
     data_module = make_data_module(tokenizer=tokenizer, args=args)
-    
+
     trainer = Seq2SeqTrainer(
         model=model,
         tokenizer=tokenizer,
