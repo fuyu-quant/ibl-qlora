@@ -212,7 +212,7 @@ class TrainingArguments(transformers.Seq2SeqTrainingArguments):
     save_strategy: str = field(default='steps', metadata={"help": 'When to save checkpoints'})
     save_steps: int = field(default=250, metadata={"help": 'How often to save a model'})
     save_total_limit: int = field(default=40, metadata={"help": 'How many checkpoints to save before the oldest is overwritten'})
-    ibl_data: str = field(default='ibl-ver1', metadata={"help": 'The ibl_data for ibl training data'})
+    ibl_data: str = field(default='ibl-regression-ver1-all', metadata={"help": 'The ibl_data for ibl training data'})
 
 @dataclass
 class GenerationArguments:
