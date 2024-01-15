@@ -576,6 +576,7 @@ def make_data_module(tokenizer: transformers.PreTrainedTokenizer, args) -> Dict:
         if dataset_name == 'alpaca':
             dataset = load_dataset(f"fuyu-quant/{ibl_data}", split='train')
             dataset_dict = DatasetDict({'train': dataset})
+            print(f'Data used for learning：{ibl_data}')
             return dataset_dict
         elif dataset_name == 'alpaca-clean':
             return load_dataset("yahma/alpaca-cleaned")
